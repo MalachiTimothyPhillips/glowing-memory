@@ -1,6 +1,6 @@
 one3d.rea
 -3                     spatial dimension
-2                     number of fields
+3                     number of fields
 #========================================================
 #
 #    This gives a 9 x 1 box, periodic in x,
@@ -18,4 +18,5 @@ Box
 10.1875 12.6104 15.2176 17.9815 20.8729 23.8610 26.9141 30.               y0 y1 ratio 
 0 1 1               z0 z1 ratio 
 v  ,O  ,W  ,SYM,P  ,P     BCs !3 characters each
+t  ,t  ,t  ,I  ,P  ,P     BCs !3 characters each
 t  ,t  ,t  ,I  ,P  ,P     BCs !3 characters each
