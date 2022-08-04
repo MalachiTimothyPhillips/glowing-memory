@@ -30,10 +30,11 @@ dfloat phi_rand(dfloat phi, int k)
     }
     @barrier("local");
 
-    @exclusive dfloat hiSum = 0;
+    @exclusive dfloat hiSum;
 
     for(int k = 0; k < kmax; ++k){
       for(dlong j = 0; j < p_Nq; ++j; @inner(0)){
+        if(k == 0) hiSum = 0.0;
         const dfloat scale = 2 * p_PI * k * p_dz;
         phis = phi_rand(phis, k);
         const dfloat arg_span = phis + scale*r_zs;

@@ -1,7 +1,7 @@
 [GENERAL] 
 polynomialOrder = 6
 #startFrom = "r0.f00001"
-numSteps = 20000
+numSteps = 1
 dt = 2.5e-02
 timeStepper = tombo2
 writeInterval = 1000
