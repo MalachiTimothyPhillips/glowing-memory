@@ -1,0 +1,224 @@
+//
+// nekRS User Defined File
+//
+
+#include <math.h>
+#include "udf.hpp"
+#include "plugins/tavg.hpp"
+
+// #include "plugins/lowMach.hpp"
+
+static dlong NUMBER_ELEMENTS_X;
+static dlong NUMBER_ELEMENTS_Y;
+static dlong NUMBER_ELEMENTS_Z;
+static int tAvg_writeInterval;
+
+static dfloat xmin, xmax;
+static dfloat ymin, ymax;
+static dfloat zmin, zmax;
+static dfloat geomScale;
+
+static dfloat P_DELTA;
+static dfloat P_GAMMA;
+static dfloat visc;
+static dfloat cond;
+static dfloat zw;
+
+static occa::kernel userfKernel;
+static occa::kernel computeHIKernel;
+static occa::kernel userQKernel;
+static occa::kernel userVpKernel;
+
+static occa::memory o_locToGlobE;
+static occa::memory o_hi;
+static occa::memory o_him1;
+static occa::memory o_phis;
+static occa::memory o_gllz;
+
+/*
+void qtl(nrs_t* nrs, dfloat time, occa::memory o_div)
+{
+  lowMach::qThermalIdealGasSingleComponent(time, o_div);
+}
+
+void userq(nrs_t *nrs, dfloat time, occa::memory o_S, occa::memory o_FS)
+{
+  auto cds   = nrs->cds;
+  auto mesh = cds->mesh[0];
+  userQKernel(mesh->Nelements, 
+              mesh->o_x, 
+              o_FS);
+}
+
+void uservp(nrs_t *nrs, dfloat time, occa::memory o_U, occa::memory o_S,
+            occa::memory o_UProp, occa::memory o_SProp)
+{
+  auto mesh = nrs->meshV;
+
+  userVpKernel(mesh->Nelements, 
+               nrs->fieldOffset, 
+               nrs->cds->fieldOffset[0],
+               visc, 
+               cond,
+               o_S, 
+               o_UProp, 
+               o_SProp);
+}
+*/
+
+void UDF_Setup0(MPI_Comm comm, setupAide &options)
+{
+  options.getArgs("VISCOSITY", visc);
+  options.getArgs("SCALAR00 DIFFUSIVITY", cond);
+
+  platform->par->extract("casedata","number_elements_x",NUMBER_ELEMENTS_X);
+  platform->par->extract("casedata","number_elements_y",NUMBER_ELEMENTS_Y);
+  platform->par->extract("casedata","number_elements_z",NUMBER_ELEMENTS_Z);
+  platform->par->extract("casedata","tavg_writeinterval", tAvg_writeInterval);
+  geomScale = 1.0;
+  zw = 1.7;
+
+  platform->par->extract("casedata", "p_delta", P_DELTA);
+  platform->par->extract("casedata", "p_gamma", P_GAMMA);
+
+  if (platform->options.compareArgs("BUILD ONLY", "FALSE")) {
+    const auto nek_cb_scnrs = (double*) nek::ptr("cb_scnrs");
+    nek_cb_scnrs[0] = P_DELTA;
+    nek_cb_scnrs[1] = P_GAMMA;
+  }
+
+}
+
+void UDF_LoadKernels(occa::properties& kernelInfo)
+{
+  kernelInfo["defines/p_PI"] = M_PI;
+  kernelInfo["defines/p_invPI"] = 1/M_PI;
+  const dfloat dz = 1.0/NUMBER_ELEMENTS_Z;
+  kernelInfo["defines/p_dz"] = dz;
+  std::cout << "p_dz:" << dz << std::endl; 
+  kernelInfo["defines/p_geomScale"] = geomScale;
+  kernelInfo["defines/p_invDELTA"] = 1.0/P_DELTA;
+
+  userfKernel = oudfBuildKernel(kernelInfo, "userf");
+  computeHIKernel = oudfBuildKernel(kernelInfo, "computeHI");
+
+/*
+#if 0
+  userQKernel = oudfBuildKernel(kernelInfo, "userQ");
+#endif
+  userVpKernel = oudfBuildKernel(kernelInfo, "userVp");
+
+  lowMach::buildKernel(kernelInfo);
+*/
+
+  tavg::buildKernel(kernelInfo);
+}
+
+void userf(nrs_t *nrs, dfloat time, occa::memory o_U, occa::memory o_FU)
+{
+  auto mesh = nrs->meshV;
+
+  static auto il = -1;
+  const dfloat ts = 4.0; // should make kernel parameter, so as to not repeat this
+  const auto it = int(time / ts);
+  
+  if(it != il){
+    il = it;
+    o_him1.copyFrom(o_hi, NUMBER_ELEMENTS_Z * mesh->Nq * sizeof(dfloat));
+    platform->linAlg->fill(NUMBER_ELEMENTS_Z * mesh->Nq, 0.0, o_hi);
+    const int kmax = zmax * geomScale / zw;
+    std::cout << "kmax:" << kmax << std::endl;
+    computeHIKernel(NUMBER_ELEMENTS_Z,
+                    kmax,
+                    o_gllz,
+                    o_phis,
+                    o_hi);
+  }
+
+  userfKernel(mesh->Nlocal,
+              nrs->fieldOffset,
+              NUMBER_ELEMENTS_X,
+              NUMBER_ELEMENTS_Y,
+              NUMBER_ELEMENTS_Z,
+              time,
+              o_locToGlobE,
+              mesh->o_x,
+              mesh->o_y,
+              mesh->o_z,
+              o_him1,
+              o_hi,
+              o_FU);
+}
+
+void UDF_Setup(nrs_t *nrs)
+{
+  auto mesh = nrs->meshV;
+
+  // work around for https://github.com/Nek5000/nekRS/issues/446
+  o_gllz = platform->device.malloc(mesh->Nq * sizeof(dfloat), mesh->gllz);
+
+  xmax = platform->linAlg->max(mesh->Nlocal, mesh->o_x, platform->comm.mpiComm);
+  xmin = platform->linAlg->min(mesh->Nlocal, mesh->o_x, platform->comm.mpiComm);
+
+  ymax = platform->linAlg->max(mesh->Nlocal, mesh->o_y, platform->comm.mpiComm);
+  ymin = platform->linAlg->min(mesh->Nlocal, mesh->o_y, platform->comm.mpiComm);
+
+  zmax = platform->linAlg->max(mesh->Nlocal, mesh->o_z, platform->comm.mpiComm);
+  zmin = platform->linAlg->min(mesh->Nlocal, mesh->o_z, platform->comm.mpiComm);
+
+  std::vector<dlong> globalElement(mesh->Nelements, 0);
+  for(int element = 0; element < mesh->Nelements; ++element)
+    globalElement[element] = nek::lglel(element);
+  
+  o_locToGlobE = platform->device.malloc(mesh->Nelements * sizeof(dlong), globalElement.data());
+
+  o_hi = platform->device.malloc(NUMBER_ELEMENTS_Z * mesh->Nq * sizeof(dfloat));
+  o_him1 = platform->device.malloc(NUMBER_ELEMENTS_Z * mesh->Nq * sizeof(dfloat));
+
+  o_phis = platform->device.malloc(NUMBER_ELEMENTS_Z * sizeof(dfloat));
+  platform->linAlg->fill(NUMBER_ELEMENTS_Z, 1.0, o_phis);
+
+  udf.uEqnSource = &userf;
+/*
+#if 0 // is this really needed?
+  udf.sEqnSource = &userq;
+#endif
+
+  udf.properties = &uservp;
+  //udf.div = &qtl;
+*/
+
+  tavg::setup(nrs);
+
+//  lowMach::setup(nrs, P_GAMMA);
+}
+
+void UDF_ExecuteStep(nrs_t *nrs, dfloat time, int tstep)
+{
+  auto mesh = nrs->meshV;
+
+  tavg::run(time);
+
+#if 1
+  const dfloat qtlL2 = platform->linAlg->weightedNorm2(
+    mesh->Nlocal,
+    mesh->o_LMM,
+    nrs->o_div,
+    platform->comm.mpiComm) / sqrt(mesh->volume
+  );
+
+  if(platform->comm.mpiRank == 0)
+    std::cout << "qtl L2-norm: " << qtlL2 << std::endl; 
+#endif
+
+  if (nrs->isOutputStep) {
+    nek::ocopyToNek(time, tstep);
+    nek::userchk();
+  }
+
+  if (tstep == 0)
+    writeFld(nrs, time, "ic_");
+
+  if (tstep>1 && tstep%tAvg_writeInterval==0)
+    tavg::outfld();
+}

@@ -1,0 +1,375 @@
+c-----------------------------------------------------------------------
+      subroutine userbc (i,j,k,f,eg)
+      include 'SIZE'
+      include 'TOTAL'
+      include 'NEKUSE'
+
+      common /mygeom/ xmn,xmx,ymn,ymx,zmn,zmx,scale_geom
+      common /myinflow/ ui(lx1,ly1,lz1,lelt)
+     $                , vi(lx1,ly1,lz1,lelt)
+     $                , wi(lx1,ly1,lz1,lelt)
+
+      integer ilast , e , eg , f
+      save    ilast 
+      data    ilast / -1 /
+
+      e = gllel(eg)
+
+      if (istep.lt.2) then
+
+        a  = -2.1881e+00
+        b  = -2.3757e-01
+        c  = -9.4380e-01
+
+        ea =  9.6238e-01
+        eb =  2.2668e+00
+        ec =  1.5029e+00
+
+        aa =  1.7244e-01
+        bb =  4.9570e-01
+        cc =  1. - (aa+bb)
+
+        ys  = scale_geom*y          !  scale to multiples of d0
+        eta = 1.267186747781574*ys  !  ys=1 --> delta* = 1
+
+        ra = a*(eta**ea)
+        rb = b*(eta**eb)
+        rc = c*(eta**ec)
+
+        ux = 1 - ( aa*exp(ra)+bb*exp(rb)+cc*exp(rc)) ! Blasius fit
+        ui  (i,j,k,e) = ux
+
+      else
+
+        ux = ui (i,j,k,e)
+
+      endif
+
+      uy   = 0
+      uz   = 0
+
+      temp = 0
+      if (y.lt.0.001) temp = 1
+
+      return
+      end
+c-----------------------------------------------------------------------
+      subroutine uservp (ix,iy,iz,eg)
+      include 'SIZE'
+      include 'TOTAL'
+      include 'NEKUSE'
+
+      integer e,f,eg
+c     e = gllel(eg)
+
+      udiff =0.
+      utrans=0.
+      return
+      end
+c-----------------------------------------------------------------------
+      subroutine userf  (i,j,k,eg)
+      include 'SIZE'
+      include 'TOTAL'
+      include 'NEKUSE'
+      include 'ZPER'    ! nelz
+
+      common /mygeom/ xmn,xmx,ymn,ymx,zmn,zmx,scale_geom
+      common /mytrip/ xl,yl,zw,ts,At
+      common /mytrpa/ hi(lz1,lelt),hi1(lz1,lelt)
+     $              , f2(lx1,ly1,lz1,lelt),gaussxy(lx1,ly1,lz1,lelt)
+
+      integer e,f,eg,il,elast,ezlast,ex,ey,ez
+      save il,elast,ex,ey,ez
+      data il,elast / -9, -9 /
+
+c     Base values
+
+      ffx = 0.0  ! This is the negative pressure gradient
+      ffy = 0.0
+      ffz = 0.0
+
+c
+
+      e = gllel(eg)
+      if (e.ne.elast) call get_exyz(ex,ey,ez,eg,nelx,nely,nelz)
+
+      if (istep.lt.2) then
+
+         x = scale_geom * x  ! Convert to multiples of d0
+         y = scale_geom * y
+         z = scale_geom * z
+
+
+         xl = 4.   !  Everthing here w.r.t. d0 units
+         yl = 1.
+         zw = 1.7
+         ts = 4.
+         At = 0.05
+         At = 1.00
+
+         x0 = 10.
+
+         argx = -((x-x0)**2)/(xl**2)  ! Streamwise
+         argy = -(y**2)/(yl**2)       ! Wall normal
+         exy  = exp(argx+argy)
+
+         gaussxy(i,j,k,e) = At*exy
+
+      endif
+
+      it   = int(time/ts)
+      s    = time/ts - it
+      b    = 3*s*s - 2*s*s*s ! Cubic Hermite/Lagrange polynomial
+      b1   = 1.-b
+
+      if (it.ne.il) then     ! New time window for cubic
+         il= it
+         call copy(hi1,hi,lz1*nelz)
+         call geth(hi)         ! pseudo random periodic , unit amplitude
+      endif
+
+      gt = (b1*hi1(k,ez) + b*hi(k,ez))
+
+      ffy = gt*gaussxy(i,j,k,e)
+
+      f2(i,j,k,e) = ffy ! Save for verification only
+
+      return
+      end
+c-----------------------------------------------------------------------
+      subroutine userq  (ix,iy,iz,eg)
+      include 'SIZE'
+      include 'TOTAL'
+      include 'NEKUSE'
+
+      integer e,f,eg
+c     e = gllel(eg)
+
+      qvol   = 0.0
+
+      return
+      end
+c-----------------------------------------------------------------------
+      subroutine useric (i,j,k,eg)
+
+      include 'SIZE'
+      include 'TOTAL'
+      include 'NEKUSE'
+
+      common /mygeom/ xmn,xmx,ymn,ymx,zmn,zmx,scale_geom
+      common /myinflow/ ui(lx1,ly1,lz1,lelt)
+     $                , vi(lx1,ly1,lz1,lelt)
+     $                , wi(lx1,ly1,lz1,lelt)
+
+      e = gllel(eg)
+
+
+      a  = -2.1881e+00
+      b  = -2.3757e-01
+      c  = -9.4380e-01
+
+      ea =  9.6238e-01
+      eb =  2.2668e+00
+      ec =  1.5029e+00
+
+      aa =  1.7244e-01
+      bb =  4.9570e-01
+      cc =  1. - (aa+bb)
+
+      ys  = scale_geom*y          !  scale to multiples of d0
+      eta = 1.267186747781574*ys  !  ys=1 --> delta* = 1
+
+      ra = a*(eta**ea)
+      rb = b*(eta**eb)
+      rc = c*(eta**ec)
+
+      ux = 1. - ( aa*exp(ra)+bb*exp(rb)+cc*exp(rc)) ! Blasius fit
+      uy = 0
+      uz = 0
+
+      temp = 1 
+
+      return
+      end
+c-----------------------------------------------------------------------
+      subroutine usrdat
+      include 'SIZE'
+      include 'TOTAL'
+
+      integer e,f
+
+      return
+      end
+c-----------------------------------------------------------------------
+      subroutine usrdat2
+      include 'SIZE'
+      include 'TOTAL'
+      include 'ZPER'   ! for nelx,nely,nelz
+
+      common /mygeom/ xmn,xmx,ymn,ymx,zmn,zmx,scale_geom
+
+c- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+c
+c     SCHLATTER 2010 Int J Heat F Flow
+c
+c        n = 4096 x 385 x 384 = 60M --> 30 GPUs
+c        L = 6000 x 200 x 240
+c          = 30 x 1 x 1.2 H
+c        H = 200 d0.
+c
+c        d0 = Blasius displacement thickness at Inlet.
+c
+c- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+      x0 = 0
+      x1 = 170   ! Axial 210 
+
+      y0 = 0
+      y1 = 9   ! Wall normal 11 
+
+      z0 = 0
+      z1 = 28    ! Spanwise 35
+
+      call rescale_x(xm1,x0,x1)
+      call rescale_x(ym1,y0,y1)
+      call rescale_x(zm1,z0,z1)
+
+      call domain_size(xmn,xmx,ymn,ymx,zmn,zmx)
+      scale_geom = 1.
+
+      return
+      end
+c-----------------------------------------------------------------------
+      subroutine usrdat3
+      include 'SIZE'
+      include 'TOTAL'
+c
+      return
+      end
+c-----------------------------------------------------------------------
+      subroutine userchk
+      include 'SIZE'
+      include 'TOTAL'
+      include 'ZPER'  ! for nelx,nely,nelz
+
+      integer e
+
+      common /mytrpa/ hi(lx1,ly1,lz1,lelt),hi1(lx1,ly1,lz1,lelt)
+     $              , f2(lx1,ly1,lz1,lelt)
+
+      n     =   nx1*ny1*nz1*nelv
+      nelx  =   60 ! FROM .box file
+      nely  =   15
+      nelz  =   20 ! spanwise direction
+
+      call lambda2(t(1,1,1,1,2))
+
+      return
+      end
+c-----------------------------------------------------------------------
+      subroutine geth(hi)         ! pseudo random periodic , unit amplitude
+
+      include 'SIZE'
+      include 'TOTAL'
+      include 'ZPER'  ! nelz
+
+      common /mygeom/ xmn,xmx,ymn,ymx,zmn,zmx,scale_geom
+      common /mytrip/ xl,yl,zw,ts,At
+
+      real phi
+      save phi
+      data phi / 1.0 / ! for random phase
+
+      real hi(lz1,lelt)
+
+      integer e,eg,ex,ey,ez
+
+c      
+c      SCHLATTER Orlu Tripping 2012:
+c      
+c      Spatial scales for forcing:
+c      
+c      lx = 4d0
+c      ly = 1d0
+c      lz = 1.7d0 (k max = 2 pi / lz)
+c      ts = 4*d0/U
+c      
+c      So, phi_k is a random number.
+c      
+c      g_k = sin( phi + 2 pi  k z/zmax  ), for k=1,...k_max
+c      
+c          = sin( phi + khat z )
+c      
+c      
+c      khat = 2 pi k / zmax  < 2 pi / lz ==> k < zmax/lz
+c      
+c      Here, we have width is zmax = 1.2H = 1.2 x 200 d0 = 240 d0
+c      
+c      and, we have lz = 1.7 d0, so:
+c      
+c      
+c            k < 240 d0 / 1.7 d0 = 141.2
+c      
+c      
+c      More generally, just make sure upper bound on k is
+c      
+c               zmax / ( 1.7 d0 )
+c      
+
+      n = lx1*ly1*lz1*nelt
+
+      kmax = ( zmx*scale_geom / zw ) ! zw = 1.7 d0  ! "x" is spanwise
+
+
+      if (istep.lt.2.and.nid.eq.0) write(6,*) kmax,' This is kmax.'
+
+      nxy = nelx*nely
+
+      dzm = 1.0      ! Scale is relative to spanwise distance
+      dz  = dzm/nelz
+
+
+      call rzero(hi,lx1*nelz)
+      do k=1,kmax
+
+         phi = phi_rand(phi,k)
+         scale = 2*pi*k*dz
+
+         do ez=1,nelz
+            
+            ze = ez-1
+
+            do j =1,lz1
+           
+               zs = ze + 0.5*(zgm1(j,1)+1.)
+               arg_span = phi + scale*zs
+
+               hi(j,ez) = hi(j,ez) + sin(arg_span)
+
+            enddo
+
+         enddo
+
+      enddo
+
+      return
+      end
+
+c-----------------------------------------------------------------------
+      function phi_rand(phi,k)
+      include 'SIZE'
+      include 'TOTAL' ! for pi
+
+      plast = phi
+      if (plast.eq.0) plast=1.1
+
+      twopi = 2.*pi
+
+      pnew = k*k*k*k*plast + 10000*k + 999*k*k + 77*k*k*k + 400/plast
+      pnew = mod(pnew,twopi);
+
+      phi_rand = pnew
+
+      return
+      end
+c-----------------------------------------------------------------------

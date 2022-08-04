@@ -1,0 +1,32 @@
+[GENERAL] 
+polynomialOrder = 6
+#startFrom = "r0.f00001"
+numSteps = 20000
+dt = 2.5e-02
+timeStepper = tombo2
+writeInterval = 1000
+
+[PRESSURE]
+residualTol = 1e-04
+
+[VELOCITY]
+residualTol = 1e-6
+density = 1.0
+viscosity = 1/350. 
+
+[TEMPERATURE]
+residualTol = 1e-06
+conductivity = 1/248.5
+rhoCp = 1.0
+
+[SCALAR01] # lambda2
+solver = none
+
+[CASEDATA]
+# must match that specified in the box file
+tAvg_writeInterval = 16000
+NUMBER_ELEMENTS_X = 60
+NUMBER_ELEMENTS_Y = 15 
+NUMBER_ELEMENTS_Z = 20
+P_DELTA = 0.2
+P_GAMMA = 1.4

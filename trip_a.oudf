@@ -1,0 +1,202 @@
+dfloat phi_rand(dfloat phi, int k)
+{
+  dfloat plast = phi;
+  dfloat pnew, inew;
+
+  if (plast == 0) plast=1.1;
+
+  pnew = k*k*k*k*plast + 10000*k + 999*k*k + 77*k*k*k + 400/plast;
+  inew = pnew/p_PI;
+  //pnew = p_PI*fmod(inew,2);
+  pnew = fmod(inew,2 * p_PI);
+
+  return pnew;
+}
+
+#if 1
+
+@kernel void computeHI(const dlong nelz,
+                       const int kmax,
+                       @restrict const dfloat * gllz,
+                       @restrict       dfloat * PHIS,
+                       @restrict       dfloat * HI)
+{
+  for(dlong ez = 0; ez < nelz; ++ez; @outer(0)){
+    @exclusive dfloat r_zs;
+    @exclusive dfloat phis;
+    for(dlong j = 0; j < p_Nq; ++j; @inner(0)){
+      r_zs = ez + 0.5 * (gllz[j] + 1.0); 
+      phis = PHIS[ez];
+    }
+    @barrier("local");
+
+    @exclusive dfloat hiSum = 0;
+
+    for(int k = 0; k < kmax; ++k){
+      for(dlong j = 0; j < p_Nq; ++j; @inner(0)){
+        const dfloat scale = 2 * p_PI * k * p_dz;
+        phis = phi_rand(phis, k);
+        const dfloat arg_span = phis + scale*r_zs;
+        hiSum += sinf(arg_span);
+      }
+      @barrier("local");
+    }
+
+    for(dlong j = 0; j < p_Nq; ++j; @inner(0)){
+      HI[j + ez*p_Nq] += hiSum;
+      if(j == 0) PHIS[ez] = phis; 
+    }
+  }
+}
+
+#else
+
+@kernel void computeHI(const dlong nelz,
+                             const int kmax,
+                             @restrict const dfloat * gllz,
+                             @restrict       dfloat * phis,
+                             @restrict       dfloat * HI)
+{ 
+  for(dlong ez = 0; ez < nelz; ++ez; @outer(0)){
+    for(int k = 0; k < kmax; ++k){
+      phis[ez] = phi_rand(phis[ez], k);
+      for(dlong j = 0; j < p_Nq; ++j; @inner(0)){
+        const dfloat scale = 2 * p_PI * k * p_dz; 
+        const dfloat zs = ez + 0.5 * (gllz[j] + 1.0);
+        const dfloat arg_span = phis[ez] + scale*zs;
+        HI[j + ez*p_Nq] += sin(arg_span);
+      }
+      @barrier("local");
+    }
+  }
+}
+
+#endif
+
+
+@kernel void userf(const dlong N,
+                   const dlong fieldOffset,
+                   const dlong nelx,
+                   const dlong nely,
+                   const dlong nelz,
+                   const dfloat time,
+                   @restrict const dlong * locToGlobE,
+                   @restrict const dfloat * x_coord,
+                   @restrict const dfloat * y_coord,
+                   @restrict const dfloat * z_coord,
+                   @restrict const dfloat * him1,
+                   @restrict const dfloat * hi,
+                   @restrict       dfloat * FU)
+{
+#if 1
+  for(dlong n=0;n<N;++n;@tile(p_blockSize,@outer,@inner)){
+    const dfloat x = p_geomScale * x_coord[n];
+    const dfloat y = p_geomScale * y_coord[n];
+
+    // TODO: replace by kernel parameters 
+    const dfloat inv_xlxl = 0.0625;
+    const dfloat inv_ylyl = 1.0;
+    const dfloat inv_ts = 0.25;
+    const dfloat At = 0.005;
+    const dfloat x0 = 10.;
+
+    const float argx = -((x-x0)*(x-x0))*inv_xlxl;  // Streamwise
+    const float argy = -(y*y)*inv_ylyl;            // Wall normal
+    const dfloat exy = expf(argx+argy);
+
+    const dfloat gaussxy = At*exy;
+    const int it = time * inv_ts;
+    const dfloat s = time*inv_ts - it;
+    const dfloat b = 3.0*s*s - 2.0*s*s*s; // Cubic Hermite/Lagrange polynomial
+    const dfloat b1 = 1.0f - b;
+
+    const dlong e = n / p_Np;
+    const dlong ez = locToGlobE[e]/(nelx*nely);
+
+    const dlong k = (n-e*p_Np) / (p_Nq * p_Nq);
+    const dlong id = ez * p_Nq + k;
+    const float gt = b1 * him1[id] + b * hi[id];
+
+    //FU[0 * fieldOffset + n] = 0.0;
+    FU[1 * fieldOffset + n] = gt * gaussxy;
+    //FU[2 * fieldOffset + n] = 0.0;
+  }
+}
+
+void velocityDirichletConditions(bcData *bc){
+
+  // TODO: replace by kernel parameters 
+  const float a  = -2.1881e+00;
+  const float b  = -2.3757e-01;
+  const float c  = -9.4380e-01;
+
+  const float ea =  9.6238e-01;
+  const float eb =  2.2668e+00;
+  const float ec =  1.5029e+00;
+
+  const float aa =  1.7244e-01;
+  const float bb =  4.9570e-01;
+  const float cc =  1. - (aa+bb);
+
+  const dfloat ys  = p_geomScale*bc->y;          //  scale to multiples of d0
+  const dfloat eta = 1.267186747781574*ys;  //  ys=1 --> delta* = 1
+
+  const float ra = a*(powf(eta,ea));
+  const float rb = b*(powf(eta,eb));
+  const float rc = c*(powf(eta,ec));
+
+  bc->u = 1 - ( aa*expf(ra)+bb*expf(rb)+cc*expf(rc)); // Blasius fit
+  bc->v = 0.0;
+  bc->w = 0.0;
+}
+
+float sstep(float vbs, float vas, float sp, float epsmr, float r){
+  float delta = vas-vbs;
+  return 0.5*delta*( tanhf((r-sp)/epsmr) + 1.0) + vbs;
+}
+
+void scalarDirichletConditions(bcData *bc){
+  bc->s = 1.0;
+
+  // TODO: replace by kernel parameters 
+  dfloat tol = 1e-6;
+  bool ifhotspot = true;
+  float dtemx = 0.05;
+  float xcen = 35.0;
+  float xtmn = 30.0;
+  float xtmx = 40.0;
+  float epst = 2.0;
+
+  float Atime = 0.5*(tanh(4*bc->time)+1.0);
+
+  if(ifhotspot && (bc->y < tol)){
+    float fltx1 = sstep(0.0, 1.0, xcen, epst, bc->x);
+    float fltx2 = 1.0; //sstep(1.0, 0.0, xtmx, epst, bc->x);
+    float dtval = dtemx*fltx1*fltx2;
+    bc->s += Atime*dtval;
+  }
+
+}
+
+void scalarNeumannConditions(bcData *bc){
+}
+
+@kernel void userVp(const dlong Nelements,
+                    const dlong uOffset,
+                    const dlong sOffset,
+                    const dfloat visc,
+                    const dfloat cond,
+                    @restrict const dfloat * TEMP,
+                    @restrict dfloat * UPROP,
+                    @restrict dfloat * SPROP)
+{
+  for(dlong e=0;e<Nelements;++e;@outer(0)){
+    for(int n=0;n<p_Np;++n;@inner(0)){
+      const int id = e*p_Np + n;
+      UPROP[id + 0*uOffset] = visc;
+      SPROP[id + 0*sOffset] = cond;
+      UPROP[id + 1*uOffset] = 1/TEMP[id];
+      SPROP[id + 1*sOffset] = 1/TEMP[id];
+    }
+  }
+}
